@@ -37,7 +37,7 @@ class NetworkHandler(ss.StreamRequestHandler):
             for unit in json_data["unit_updates"]:
                 units[unit["id"]] = unit
 
-            # Extract resources safely and debug
+            # Extract resources safely
             for (x, y), tile in game_grid.items():
                 if tile is not None and tile.get("resources") is not None:
                     resources[(x, y)] = tile["resources"]
@@ -65,22 +65,30 @@ class Game:
             if unit['type'] == 'worker':
                 unit_pos = (unit['x'], unit['y'])
                 closest_resource_pos = self.find_closest_resource(unit_pos)
-                if closest_resource_pos:
+
+                if closest_resource_pos and self.is_adjacent(unit_pos, closest_resource_pos):
+                    # If adjacent, send a GATHER command
+                    direction = self.get_direction_toward(unit_pos, closest_resource_pos)
+                    command = {"command": "GATHER", "unit": unit_id, "dir": direction}
+                    print(f'unit at {unit["x"]}, {unit["y"]} has resource: {unit["resource"]}')
+                    # print(f"Gather command for unit {unit_id} at {unit_pos}")
+                elif closest_resource_pos:
                     # Move toward the closest resource
                     direction = self.get_direction_toward(unit_pos, closest_resource_pos)
+                    command = {"command": "MOVE", "unit": unit_id, "dir": direction}
+                    # print(f"Move command for unit {unit_id} towards {direction}")
                 else:
                     # Move randomly if no resources are found
                     direction = random.choice(self.directions)
-
-                if direction:
                     command = {"command": "MOVE", "unit": unit_id, "dir": direction}
-                    commands["commands"].append(command)
-                    print(f"Command for unit {unit_id}: {command}")  # Debug each command
+                    # print(f"Random move for unit {unit_id} towards {direction}")
 
-        if not commands["commands"]:
-            print("No commands to send.")  # Debug if no commands are created
-        else:
-            print("Commands to send:", commands)  # Debug successful commands
+                commands["commands"].append(command)
+
+        # if not commands["commands"]:
+        #     # print("No commands to send.")  # Debug if no commands are created
+        # else:
+        #     # print("Commands to send:", commands)  # Debug successful commands
 
         response = json.dumps(commands, separators=(',', ':')) + '\n'
         return response
@@ -94,6 +102,12 @@ class Game:
                 min_distance = distance
                 closest_resource_pos = resource_pos
         return closest_resource_pos
+
+    def is_adjacent(self, pos1, pos2):
+        """Check if two positions are adjacent on the grid."""
+        dx = abs(pos1[0] - pos2[0])
+        dy = abs(pos1[1] - pos2[1])
+        return (dx == 1 and dy == 0) or (dx == 0 and dy == 1)
 
     def manhattan_distance(self, pos1, pos2):
         return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
