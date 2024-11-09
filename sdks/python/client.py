@@ -59,20 +59,28 @@ class NetworkHandler(ss.StreamRequestHandler):
 
 class Game:
     def __init__(self):
-        self.units = {}  # unit_id to unit data
-        self.game_grid = {}
-        self.resources = {}
-        self.directions = ['N', 'S', 'E', 'W']
-        self.unit_states = {}  # Dictionary to track per-unit states
+        self.units = {}          # unit_id to unit data
+        self.game_grid = {}      # (x, y) to tile data
+        self.resources = {}      # (x, y) to resource amount
+        self.directions = ['N', 'E', 'S', 'W']
+        self.unit_states = {}    # unit_id to state data
 
     def get_unit_commands(self, json_data):
         commands = {"commands": []}
+
+        build_command = {"command": "CREATE", "type": "worker"}
+        commands["commands"].append(build_command)
+
         base_pos = self.find_base_position()  # Get base position for workers to return to
 
         for unit_id, unit in self.units.items():
             if unit_id not in self.unit_states:
                 # Initialize unit state
-                self.unit_states[unit_id] = {'current_direction': random.choice(self.directions)}
+                self.unit_states[unit_id] = {
+                    'current_direction': random.choice(self.directions),
+                    'wall_hugging': False,
+                    'wall_side': 'right'  # or 'left', depending on preference
+                }
             unit_state = self.unit_states[unit_id]
 
             if unit['type'] == 'worker':
@@ -90,15 +98,14 @@ class Game:
                     elif base_pos:
                         # Move toward base
                         direction = self.get_direction_toward(unit_pos, base_pos)
-                        direction = self.get_navigable_direction(unit_pos, direction)
+                        direction = self.get_navigable_direction(unit_pos, direction, unit_state)
                         if direction:
                             command = {"command": "MOVE", "unit": unit_id, "dir": direction}
-                            print(f"Return to base for unit {unit_id} towards {direction}")
+                            print(f"Returning to base for unit {unit_id} towards {direction}")
                             commands["commands"].append(command)
                     else:
                         # No base found, move randomly
-                        direction = unit_state['current_direction']
-                        direction = self.get_navigable_random_direction(unit_pos, direction, unit_state)
+                        direction = self.get_random_direction(unit_pos, unit_state)
                         if direction:
                             command = {"command": "MOVE", "unit": unit_id, "dir": direction}
                             print(f"Random move for unit {unit_id} towards {direction}")
@@ -107,38 +114,32 @@ class Game:
                     # Gathering resources
                     closest_resource_pos = self.find_closest_resource(unit_pos)
                     if closest_resource_pos and self.is_adjacent(unit_pos, closest_resource_pos):
-                        # Adjacent to resource, directly issue GATHER command without modifying direction
+                        # Adjacent to resource, issue GATHER command with direction
                         direction = self.get_direction_toward(unit_pos, closest_resource_pos)
                         command = {"command": "GATHER", "unit": unit_id, "dir": direction}
-                        print(f"Gather command for unit {unit_id} at {unit_pos}")
+                        print(f"Gather command for unit {unit_id} at {unit_pos} towards {direction}")
                         commands["commands"].append(command)
                     elif closest_resource_pos:
                         # Move toward resource
                         direction = self.get_direction_toward(unit_pos, closest_resource_pos)
-                        direction = self.get_navigable_direction(unit_pos, direction)
+                        direction = self.get_navigable_direction(unit_pos, direction, unit_state)
                         if direction:
                             command = {"command": "MOVE", "unit": unit_id, "dir": direction}
-                            print(f"Move command for unit {unit_id} towards {direction}")
+                            print(f"Moving to resource for unit {unit_id} towards {direction}")
                             commands["commands"].append(command)
                     else:
                         # Move randomly
-                        direction = unit_state['current_direction']
-                        direction = self.get_navigable_random_direction(unit_pos, direction, unit_state)
+                        direction = self.get_random_direction(unit_pos, unit_state)
                         if direction:
                             command = {"command": "MOVE", "unit": unit_id, "dir": direction}
                             print(f"Random move for unit {unit_id} towards {direction}")
                             commands["commands"].append(command)
 
-        if not commands["commands"]:
-            print("No commands to send.")  # Debug if no commands are created
-        else:
-            print("Commands to send:", commands)  # Debug successful commands
-
         response = json.dumps(commands, separators=(',', ':')) + '\n'
+        print("Commands to send:", commands)
         return response
 
     def find_base_position(self):
-        """Find the position of the base on the grid."""
         for unit in self.units.values():
             if unit['type'] == 'base':
                 return (unit['x'], unit['y'])
@@ -155,7 +156,6 @@ class Game:
         return closest_resource_pos
 
     def is_adjacent(self, pos1, pos2):
-        """Check if two positions are adjacent on the grid."""
         dx = abs(pos1[0] - pos2[0])
         dy = abs(pos1[1] - pos2[1])
         return (dx == 1 and dy == 0) or (dx == 0 and dy == 1)
@@ -166,43 +166,83 @@ class Game:
     def get_direction_toward(self, unit_pos, target_pos):
         dx = target_pos[0] - unit_pos[0]
         dy = target_pos[1] - unit_pos[1]
-        if abs(dx) > abs(dy):
-            # Move in x direction
-            if dx > 0:
-                return 'E'
-            elif dx < 0:
-                return 'W'
-        elif dy != 0:
-            # Move in y direction
-            if dy > 0:
-                return 'S'
-            elif dy < 0:
-                return 'N'
+        if dx == 1 and dy == 0:
+            return 'E'
+        elif dx == -1 and dy == 0:
+            return 'W'
+        elif dx == 0 and dy == 1:
+            return 'S'
+        elif dx == 0 and dy == -1:
+            return 'N'
         else:
-            return None  # Already at the target position
+            # For non-adjacent positions, choose primary direction
+            if abs(dx) > abs(dy):
+                return 'E' if dx > 0 else 'W'
+            elif dy != 0:
+                return 'S' if dy > 0 else 'N'
+            else:
+                return None  # Already at the target position
 
-    def get_navigable_direction(self, unit_pos, direction):
-        # Check if the tile in the given direction is blocked
+    def get_navigable_direction(self, unit_pos, direction, unit_state):
         next_pos = self.get_next_position(unit_pos, direction)
         if self.is_tile_blocked(next_pos):
-            # Tile is blocked, need to find alternative
-            alternative_directions = self.get_alternative_directions(direction)
-            for alt_direction in alternative_directions:
-                next_pos = self.get_next_position(unit_pos, alt_direction)
-                if not self.is_tile_blocked(next_pos):
-                    return alt_direction
-            # All adjacent tiles are blocked, stay in place
-            return None
+            # Start wall-hugging if not already
+            if not unit_state.get('wall_hugging'):
+                unit_state['wall_hugging'] = True
+                unit_state['wall_side'] = 'right'  # or 'left'
+                unit_state['current_direction'] = direction
+            # Wall-hugging behavior
+            wall_hug_direction = self.wall_hugging_direction(unit_pos, unit_state)
+            return wall_hug_direction
         else:
-            # Tile is not blocked, proceed in the original direction
+            # If the path is clear, stop wall-hugging
+            unit_state['wall_hugging'] = False
             return direction
 
-    def get_navigable_random_direction(self, unit_pos, direction, unit_state):
-        # Continue in current direction if possible
+    def wall_hugging_direction(self, unit_pos, unit_state):
+        # Determine the sequence of directions to check based on wall side
+        if unit_state['wall_side'] == 'right':
+            directions_order = self.get_right_hand_rule_directions(unit_state['current_direction'])
+        else:
+            directions_order = self.get_left_hand_rule_directions(unit_state['current_direction'])
+
+        # Try directions in the determined order
+        for dir in directions_order:
+            next_pos = self.get_next_position(unit_pos, dir)
+            if not self.is_tile_blocked(next_pos):
+                unit_state['current_direction'] = dir
+                return dir
+        # All directions are blocked; stay in place
+        return None
+
+    def get_right_hand_rule_directions(self, current_direction):
+        # Returns directions in order based on the right-hand rule
+        
+        order = {
+            'N': ['E', 'N', 'W', 'S'],
+            'E': ['S', 'E', 'N', 'W'],
+            'S': ['W', 'S', 'E', 'N'],
+            'W': ['N', 'W', 'S', 'E']
+        }
+        return order[current_direction]
+
+    def get_left_hand_rule_directions(self, current_direction):
+        # Returns directions in order based on the left-hand rule
+        
+        order = {
+            'N': ['W', 'N', 'E', 'S'],
+            'E': ['N', 'E', 'S', 'W'],
+            'S': ['E', 'S', 'W', 'N'],
+            'W': ['S', 'W', 'N', 'E']
+        }
+        return order[current_direction]
+
+    def get_random_direction(self, unit_pos, unit_state):
+        direction = unit_state['current_direction']
         next_pos = self.get_next_position(unit_pos, direction)
         if self.is_tile_blocked(next_pos):
             # Hit an obstacle, pick a new random direction
-            alternative_directions = list(self.directions)
+            alternative_directions = self.directions.copy()
             alternative_directions.remove(direction)
             random.shuffle(alternative_directions)
             for alt_direction in alternative_directions:
@@ -210,10 +250,8 @@ class Game:
                 if not self.is_tile_blocked(next_pos):
                     unit_state['current_direction'] = alt_direction
                     return alt_direction
-            # No available direction, stay in place
             return None
         else:
-            # Continue in current direction
             return direction
 
     def get_next_position(self, unit_pos, direction):
@@ -233,18 +271,6 @@ class Game:
             # We may be off the map
             return True
         return tile.get('blocked', False)
-
-    def get_alternative_directions(self, direction):
-        # Define left and right of the current direction
-        if direction == 'N':
-            return ['E', 'W', 'S']
-        elif direction == 'S':
-            return ['E', 'W', 'N']
-        elif direction == 'E':
-            return ['N', 'S', 'W']
-        elif direction == 'W':
-
-            return ['N', 'S', 'E']
 
 
 if __name__ == "__main__":
