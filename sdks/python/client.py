@@ -15,12 +15,43 @@ else:
 class NetworkHandler(ss.StreamRequestHandler):
     def handle(self):
         game = Game()
+        first_run = True
+
+        game_grid = {}
+        units = {}
+        resources = {}
 
         while True:
+
             data = self.rfile.readline().decode() # reads until '\n' encountered
             json_data = json.loads(str(data))
             # uncomment the following line to see pretty-printed data
-            # print(json.dumps(json_data, indent=4, sort_keys=True))
+                # print(json.dumps(json_data, indent=4, sort_keys=True))
+            if first_run:
+                grid_y = json_data["game_info"]["map_height"]
+                grid_x = json_data["game_info"]["map_width"]
+                game_grid = {(x, y): None for x in range(grid_x) for y in range(grid_y)}
+                first_run = False
+
+            for tile in json_data["tile_updates"]:
+                game_grid[(tile["x"], tile["y"])] = tile
+                
+            for unit in json_data["unit_updates"]:
+                units[unit["id"]] = unit
+
+            # Extract resources safely
+            for (x, y), tile in game_grid.items():
+                if tile is not None and "resources" in tile and tile["resources"] is not None:
+                    resources[(x, y)] = tile["resources"]
+
+            # Print resources in a readable format
+            if resources:
+                print("Resources on the map:")
+                for location, resource in resources.items():
+                    print(f"Location {location}: Resources {resource}")
+            else:
+                print("No resources found on the map.")
+                
             response = game.get_random_move(json_data).encode()
             self.wfile.write(response)
 
@@ -32,6 +63,7 @@ class Game:
         self.directions = ['N', 'S', 'E', 'W']
 
     def get_random_move(self, json_data):
+        
         units = set([unit['id'] for unit in json_data['unit_updates'] if unit['type'] != 'base'])
         self.units |= units # add any additional ids we encounter
         unit = random.choice(tuple(self.units))
