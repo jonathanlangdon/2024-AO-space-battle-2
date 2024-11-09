@@ -61,37 +61,66 @@ class Game:
 
     def get_unit_commands(self, json_data):
         commands = {"commands": []}
+        base_pos = self.find_base_position()  # Get base position for workers to return to
+
         for unit_id, unit in self.units.items():
             if unit['type'] == 'worker':
                 unit_pos = (unit['x'], unit['y'])
-                closest_resource_pos = self.find_closest_resource(unit_pos)
-
-                if closest_resource_pos and self.is_adjacent(unit_pos, closest_resource_pos):
-                    # If adjacent, send a GATHER command
-                    direction = self.get_direction_toward(unit_pos, closest_resource_pos)
-                    command = {"command": "GATHER", "unit": unit_id, "dir": direction}
-                    print(f'unit at {unit["x"]}, {unit["y"]} has resource: {unit["resource"]}')
-                    # print(f"Gather command for unit {unit_id} at {unit_pos}")
-                elif closest_resource_pos:
-                    # Move toward the closest resource
-                    direction = self.get_direction_toward(unit_pos, closest_resource_pos)
-                    command = {"command": "MOVE", "unit": unit_id, "dir": direction}
-                    # print(f"Move command for unit {unit_id} towards {direction}")
+                resources_collected = unit.get('resource', 0)
+                print(f"Worker {unit_id} at {unit_pos} has {resources_collected} resources collected")
+                
+                # Check if the worker has collected 10 resources
+                if resources_collected >= 10:
+                    if base_pos and self.is_adjacent(unit_pos, base_pos):
+                        # If adjacent to the base, simulate depositing resources
+                        direction = self.get_direction_toward(unit_pos, base_pos)
+                        command = {"command": "DROP", "unit": unit_id, "dir":direction, "value": resources_collected}
+                        print(f"Deposit command for unit {unit_id} at base")
+                    elif base_pos:
+                        # Move toward the base to deposit resources
+                        direction = self.get_direction_toward(unit_pos, base_pos)
+                        command = {"command": "MOVE", "unit": unit_id, "dir": direction}
+                        print(f"Return to base for unit {unit_id} towards {direction}")
+                    else:
+                        # No base found; move randomly
+                        direction = random.choice(self.directions)
+                        command = {"command": "MOVE", "unit": unit_id, "dir": direction}
+                        print(f"Random move for unit {unit_id} towards {direction}")
                 else:
-                    # Move randomly if no resources are found
-                    direction = random.choice(self.directions)
-                    command = {"command": "MOVE", "unit": unit_id, "dir": direction}
-                    # print(f"Random move for unit {unit_id} towards {direction}")
+                    # Normal behavior: gather resources
+                    closest_resource_pos = self.find_closest_resource(unit_pos)
+                    if closest_resource_pos and self.is_adjacent(unit_pos, closest_resource_pos):
+                        # If adjacent, send a GATHER command
+                        direction = self.get_direction_toward(unit_pos, closest_resource_pos)
+                        command = {"command": "GATHER", "unit": unit_id, "dir": direction}
+                        print(f"Gather command for unit {unit_id} at {unit_pos}")
+                    elif closest_resource_pos:
+                        # Move toward the closest resource
+                        direction = self.get_direction_toward(unit_pos, closest_resource_pos)
+                        command = {"command": "MOVE", "unit": unit_id, "dir": direction}
+                        print(f"Move command for unit {unit_id} towards {direction}")
+                    else:
+                        # Move randomly if no resources are found
+                        direction = random.choice(self.directions)
+                        command = {"command": "MOVE", "unit": unit_id, "dir": direction}
+                        print(f"Random move for unit {unit_id} towards {direction}")
 
                 commands["commands"].append(command)
 
-        # if not commands["commands"]:
-        #     # print("No commands to send.")  # Debug if no commands are created
-        # else:
-        #     # print("Commands to send:", commands)  # Debug successful commands
+        if not commands["commands"]:
+            print("No commands to send.")  # Debug if no commands are created
+        else:
+            print("Commands to send:", commands)  # Debug successful commands
 
         response = json.dumps(commands, separators=(',', ':')) + '\n'
         return response
+
+    def find_base_position(self):
+        """Find the position of the base on the grid."""
+        for unit in self.units.values():
+            if unit['type'] == 'base':
+                return (unit['x'], unit['y'])
+        return None
 
     def find_closest_resource(self, unit_pos):
         min_distance = float('inf')
