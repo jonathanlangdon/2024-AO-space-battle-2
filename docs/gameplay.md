@@ -2,6 +2,8 @@
 
 ## Objective
 
+## test_comment
+
 The player that gathers the most resources and returns them to their base wins!
 
 Ties will be broken by the team that has explored the most of the map.
